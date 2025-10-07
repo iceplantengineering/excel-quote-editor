@@ -106,6 +106,10 @@ const ExcelQuoteEditor: React.FC = () => {
   const [apiConnectionStatus, setApiConnectionStatus] = useState<'none' | 'success' | 'error'>('none');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   
+  // プレビュー関連の状態
+  const [zoomLevel, setZoomLevel] = useState<number>(100);
+  const [previewFullscreen, setPreviewFullscreen] = useState<boolean>(false);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ファイル読み込み（書式情報込み）
@@ -168,23 +172,49 @@ const ExcelQuoteEditor: React.FC = () => {
           cellData.formula = cell.f;
           cellData.type = cell.t;
 
-          // スタイル情報を抽出
+          // スタイル情報を抽出（改善版）
           if (cell.s) {
             const style = cell.s;
             
-            // 背景色
-            if (style.fill && style.fill.fgColor) {
-              const color = style.fill.fgColor;
-              if (color.rgb) {
-                cellStyle.backgroundColor = `#${color.rgb}`;
+            // 背景色（より詳細な処理）
+            if (style.fill) {
+              if (style.fill.fgColor) {
+                const color = style.fill.fgColor;
+                if (color.rgb) {
+                  cellStyle.backgroundColor = `#${color.rgb.substring(2)}`; // ARGBからRGBに変換
+                } else if (color.indexed !== undefined) {
+                  // インデックス色の処理（基本色のみ）
+                  const indexedColors = [
+                    '#000000', '#FFFFFF', '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF',
+                    '#000000', '#FFFFFF', '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF'
+                  ];
+                  if (color.indexed < indexedColors.length) {
+                    cellStyle.backgroundColor = indexedColors[color.indexed];
+                  }
+                }
+              }
+              if (style.fill.bgColor) {
+                const bgColor = style.fill.bgColor;
+                if (bgColor.rgb && !cellStyle.backgroundColor) {
+                  cellStyle.backgroundColor = `#${bgColor.rgb.substring(2)}`;
+                }
               }
             }
 
-            // フォント情報
+            // フォント情報（改善版）
             if (style.font) {
               const font = style.font;
-              if (font.color && font.color.rgb) {
-                cellStyle.color = `#${font.color.rgb}`;
+              if (font.color) {
+                if (font.color.rgb) {
+                  cellStyle.color = `#${font.color.rgb.substring(2)}`;
+                } else if (font.color.indexed !== undefined) {
+                  const indexedColors = [
+                    '#000000', '#FFFFFF', '#FF0000', '#00FF00', '#0000FF', '#FFFF00', '#FF00FF', '#00FFFF'
+                  ];
+                  if (font.color.indexed < indexedColors.length) {
+                    cellStyle.color = indexedColors[font.color.indexed];
+                  }
+                }
               }
               if (font.bold) {
                 cellStyle.fontWeight = 'bold';
@@ -211,14 +241,26 @@ const ExcelQuoteEditor: React.FC = () => {
               }
             }
 
-            // 罫線（簡易実装）
+            // 罫線（改善版）
             if (style.border) {
-              cellStyle.border = '1px solid #ccc';
+              const borders = [];
+              if (style.border.top && style.border.top.style) {
+                borders.push('border-top: 1px solid #000');
+              }
+              if (style.border.bottom && style.border.bottom.style) {
+                borders.push('border-bottom: 1px solid #000');
+              }
+              if (style.border.left && style.border.left.style) {
+                borders.push('border-left: 1px solid #000');
+              }
+              if (style.border.right && style.border.right.style) {
+                borders.push('border-right: 1px solid #000');
+              }
+              if (borders.length > 0) {
+                cellStyle.border = borders.join('; ');
+              }
             }
           }
-
-          cellData.style = cellStyle;
-          styles.set(cellAddress, cellStyle);
         }
 
         row.push(cellData);
@@ -494,7 +536,7 @@ ${instruction}
     }
   }, [editHistory]);
 
-  // ダウンロード機能（書式保持）
+  // ダウンロード機能（書式保持改善版）
   const handleDownload = useCallback(() => {
     if (!workbook) {
       toast.error('ダウンロードするファイルがありません');
@@ -502,15 +544,42 @@ ${instruction}
     }
 
     try {
-      // 書式情報を含めて出力
+      // 現在のシートデータをワークブックに反映（書式保持）
+      const worksheet = workbook.Sheets[activeSheet];
+      if (worksheet) {
+        sheetData.forEach((row, rowIndex) => {
+          row.forEach((cell, colIndex) => {
+            const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
+            const existingCell = worksheet[cellAddress] || {};
+            
+            // 値を更新しつつ、既存の書式情報を保持
+            worksheet[cellAddress] = {
+              ...existingCell,
+              v: cell.value,
+              t: cell.type || (typeof cell.value === 'number' ? 'n' : 's'),
+              f: cell.formula
+            };
+            
+            // 書式情報を保持
+            if (existingCell.s) {
+              worksheet[cellAddress].s = existingCell.s;
+            }
+          });
+        });
+      }
+
+      // 書式情報を含めて出力（改善版）
       const wbout = XLSX.write(workbook, {
         bookType: 'xlsx',
         type: 'array',
         cellStyles: true,  // 書式を含める
-        bookSST: false
+        bookSST: true,     // 共有文字列テーブルを使用
+        compression: true  // 圧縮を有効化
       });
 
-      const blob = new Blob([wbout], { type: 'application/octet-stream' });
+      const blob = new Blob([wbout], { 
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+      });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -530,7 +599,7 @@ ${instruction}
       console.error('ダウンロードエラー:', error);
       toast.error('ダウンロードに失敗しました');
     }
-  }, [workbook, uploadedFile]);
+  }, [workbook, uploadedFile, sheetData, activeSheet]);
 
   // セルが結合されているかチェック
   const isMergedCell = useCallback((row: number, col: number): boolean => {
@@ -540,24 +609,51 @@ ${instruction}
     );
   }, [merges]);
 
-  // セルのスタイルを取得
+  // セルのスタイルを取得（改善版）
   const getCellStyle = useCallback((row: number, col: number): React.CSSProperties => {
     const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
     const style = cellStyles.get(cellAddress);
     
     if (!style) return {};
 
-    return {
-      backgroundColor: style.backgroundColor,
-      color: style.color,
-      fontWeight: style.fontWeight,
-      fontStyle: style.fontStyle,
-      textDecoration: style.textDecoration,
-      fontSize: style.fontSize,
-      fontFamily: style.fontFamily,
-      textAlign: style.textAlign as any,
-      border: style.border,
-    };
+    const cssStyle: React.CSSProperties = {};
+    
+    if (style.backgroundColor) {
+      cssStyle.backgroundColor = style.backgroundColor;
+    }
+    if (style.color) {
+      cssStyle.color = style.color;
+    }
+    if (style.fontWeight) {
+      cssStyle.fontWeight = style.fontWeight;
+    }
+    if (style.fontStyle) {
+      cssStyle.fontStyle = style.fontStyle;
+    }
+    if (style.textDecoration) {
+      cssStyle.textDecoration = style.textDecoration;
+    }
+    if (style.fontSize) {
+      cssStyle.fontSize = style.fontSize;
+    }
+    if (style.fontFamily) {
+      cssStyle.fontFamily = style.fontFamily;
+    }
+    if (style.textAlign) {
+      cssStyle.textAlign = style.textAlign as any;
+    }
+    if (style.border) {
+      // 複数の罫線スタイルを適用
+      const borderStyles = style.border.split('; ');
+      borderStyles.forEach(borderStyle => {
+        const [property, value] = borderStyle.split(': ');
+        if (property && value) {
+          (cssStyle as any)[property.replace(/-([a-z])/g, (g) => g[1].toUpperCase())] = value;
+        }
+      });
+    }
+
+    return cssStyle;
   }, [cellStyles]);
 
   return (
@@ -907,66 +1003,129 @@ ${instruction}
           {/* 右側：データプレビューエリア */}
           <div className="lg:col-span-2 space-y-6">
             {workbook && sheetData.length > 0 && (
-              <Card>
+              <Card className={previewFullscreen ? 'fixed inset-4 z-50 bg-white shadow-2xl' : ''}>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Eye className="h-5 w-5" />
-                    データプレビュー（書式表示）
-                    <Badge variant="outline" className="ml-2">
-                      {activeSheet}
-                    </Badge>
-                  </CardTitle>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Eye className="h-5 w-5" />
+                      データプレビュー（書式表示）
+                      <Badge variant="outline" className="ml-2">
+                        {activeSheet}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {/* ズーム機能 */}
+                      <div className="flex items-center gap-2 text-sm">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setZoomLevel(Math.max(50, zoomLevel - 10))}
+                          disabled={zoomLevel <= 50}
+                        >
+                          -
+                        </Button>
+                        <span className="min-w-16 text-center">{zoomLevel}%</span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setZoomLevel(Math.min(200, zoomLevel + 10))}
+                          disabled={zoomLevel >= 200}
+                        >
+                          +
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setZoomLevel(100)}
+                        >
+                          リセット
+                        </Button>
+                      </div>
+                      {/* フルスクリーン切り替え */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setPreviewFullscreen(!previewFullscreen)}
+                      >
+                        {previewFullscreen ? '元に戻す' : 'フルスクリーン'}
+                      </Button>
+                    </div>
+                  </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="overflow-auto max-h-96 border rounded-lg">
-                    <table className="w-full text-sm">
+                  <div 
+                    className={`overflow-auto border rounded-lg ${
+                      previewFullscreen ? 'max-h-[calc(100vh-200px)]' : 'max-h-[600px]'
+                    }`}
+                    style={{ 
+                      transform: `scale(${zoomLevel / 100})`,
+                      transformOrigin: 'top left',
+                      width: `${10000 / zoomLevel}%`,
+                      height: `${10000 / zoomLevel}%`
+                    }}
+                  >
+                    <table className="w-full text-sm border-collapse">
                       <thead>
-                        <tr className="bg-gray-50">
-                          <th className="p-2 border text-center w-12">#</th>
+                        <tr className="bg-gray-50 sticky top-0">
+                          <th className="p-2 border text-center w-12 bg-gray-100 sticky left-0 z-10">#</th>
                           {sheetData[0]?.map((_, colIndex) => (
-                            <th key={colIndex} className="p-2 border text-center min-w-24">
+                            <th key={colIndex} className="p-2 border text-center min-w-32 bg-gray-100">
                               {String.fromCharCode(65 + colIndex)}
                             </th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {sheetData.slice(0, 50).map((row, rowIndex) => (
+                        {sheetData.map((row, rowIndex) => (
                           <tr key={rowIndex}>
-                            <td className="p-2 border text-center bg-gray-50 font-medium">
+                            <td className="p-2 border text-center bg-gray-50 font-medium sticky left-0 z-10">
                               {rowIndex + 1}
                             </td>
-                            {row.map((cell, colIndex) => (
-                              <td
-                                key={colIndex}
-                                className="p-2 border relative"
-                                style={getCellStyle(rowIndex, colIndex)}
-                                title={`セル: ${String.fromCharCode(65 + colIndex)}${rowIndex + 1}${
-                                  cell.formula ? `\n数式: ${cell.formula}` : ''
-                                }`}
-                              >
-                                {isMergedCell(rowIndex, colIndex) && (
-                                  <Link className="absolute top-1 right-1 h-3 w-3 text-blue-500" />
-                                )}
-                                <span className={
-                                  typeof cell.value === 'number' 
-                                    ? 'text-right block' 
-                                    : 'text-left block'
-                                }>
-                                  {cell.value || ''}
-                                </span>
-                              </td>
-                            ))}
+                            {row.map((cell, colIndex) => {
+                              const cellStyle = getCellStyle(rowIndex, colIndex);
+                              const isMerged = isMergedCell(rowIndex, colIndex);
+                              
+                              return (
+                                <td
+                                  key={colIndex}
+                                  className="p-2 border relative min-w-32"
+                                  style={{
+                                    ...cellStyle,
+                                    minHeight: '32px',
+                                    verticalAlign: 'middle'
+                                  }}
+                                  title={`セル: ${String.fromCharCode(65 + colIndex)}${rowIndex + 1}${
+                                    cell.formula ? `\n数式: ${cell.formula}` : ''
+                                  }${
+                                    Object.keys(cellStyle).length > 0 ? '\n書式: 適用済み' : ''
+                                  }`}
+                                >
+                                  {isMerged && (
+                                    <Link className="absolute top-1 right-1 h-3 w-3 text-blue-500" />
+                                  )}
+                                  <div className={
+                                    typeof cell.value === 'number' 
+                                      ? 'text-right' 
+                                      : 'text-left'
+                                  }>
+                                    {cell.value !== undefined && cell.value !== null ? String(cell.value) : ''}
+                                  </div>
+                                </td>
+                              );
+                            })}
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                  {sheetData.length > 50 && (
-                    <p className="text-xs text-gray-500 mt-2">
-                      ※ パフォーマンス向上のため、最初の50行のみ表示しています
-                    </p>
-                  )}
+                  <div className="flex justify-between items-center mt-4 text-xs text-gray-500">
+                    <span>
+                      表示中: {sheetData.length}行 × {sheetData[0]?.length || 0}列
+                    </span>
+                    <span>
+                      ズーム: {zoomLevel}% | スクロール可能
+                    </span>
+                  </div>
                 </CardContent>
               </Card>
             )}
