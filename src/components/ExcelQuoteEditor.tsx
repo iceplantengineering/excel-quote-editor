@@ -16,11 +16,17 @@ import {
   FileText,
   History,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Key,
+  Zap,
+  Settings,
+  TestTube
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
@@ -65,6 +71,20 @@ interface MergeInfo {
   e: { r: number; c: number };
 }
 
+interface DeepSeekResponse {
+  choices: {
+    message: {
+      content: string;
+    };
+  }[];
+}
+
+interface CellUpdate {
+  address: string;
+  value: any;
+  formula?: string;
+}
+
 const ExcelQuoteEditor: React.FC = () => {
   // 状態管理
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -79,6 +99,12 @@ const ExcelQuoteEditor: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [formatPreservationStatus, setFormatPreservationStatus] = useState<boolean>(true);
   const [dragActive, setDragActive] = useState<boolean>(false);
+  
+  // DeepSeek API関連の状態
+  const [deepseekApiKey, setDeepseekApiKey] = useState<string>('');
+  const [isApiTesting, setIsApiTesting] = useState<boolean>(false);
+  const [apiConnectionStatus, setApiConnectionStatus] = useState<'none' | 'success' | 'error'>('none');
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -204,6 +230,226 @@ const ExcelQuoteEditor: React.FC = () => {
     setCellStyles(styles);
   }, []);
 
+  // DeepSeek API接続テスト
+  const testDeepSeekConnection = useCallback(async () => {
+    if (!deepseekApiKey.trim()) {
+      toast.error('DeepSeek APIキーを入力してください');
+      return;
+    }
+
+    setIsApiTesting(true);
+    try {
+      const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${deepseekApiKey}`
+        },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [
+            {
+              role: 'user',
+              content: 'こんにちは。接続テストです。'
+            }
+          ],
+          max_tokens: 50
+        })
+      });
+
+      if (response.ok) {
+        setApiConnectionStatus('success');
+        toast.success('DeepSeek API接続成功！');
+      } else {
+        const errorData = await response.json();
+        setApiConnectionStatus('error');
+        toast.error(`API接続エラー: ${errorData.error?.message || 'Unknown error'}`);
+      }
+    } catch (error) {
+      setApiConnectionStatus('error');
+      toast.error('API接続に失敗しました');
+      console.error('DeepSeek API Error:', error);
+    } finally {
+      setIsApiTesting(false);
+    }
+  }, [deepseekApiKey]);
+
+  // DeepSeek APIを使用してExcelデータを分析・編集
+  const processWithDeepSeek = useCallback(async (instruction: string) => {
+    if (!deepseekApiKey.trim()) {
+      toast.error('DeepSeek APIキーを設定してください');
+      return;
+    }
+
+    if (!workbook || !sheetData.length) {
+      toast.error('Excelファイルを読み込んでください');
+      return;
+    }
+
+    setIsProcessing(true);
+    try {
+      // 現在のシートデータをJSON形式で準備
+      const currentData = sheetData.map((row, rowIndex) => 
+        row.map((cell, colIndex) => ({
+          address: XLSX.utils.encode_cell({ r: rowIndex, c: colIndex }),
+          value: cell.value,
+          formula: cell.formula,
+          type: cell.type
+        }))
+      ).flat().filter(cell => cell.value !== '' || cell.formula);
+
+      const prompt = `
+あなたはExcelファイル編集の専門家です。以下のExcelデータに対して、ユーザーの指示に従って編集を行ってください。
+
+現在のExcelデータ:
+${JSON.stringify(currentData, null, 2)}
+
+ユーザーの編集指示:
+${instruction}
+
+以下の形式でJSONレスポンスを返してください:
+{
+  "updates": [
+    {
+      "address": "セルアドレス（例：A1）",
+      "value": "新しい値",
+      "formula": "数式がある場合（オプション）"
+    }
+  ],
+  "explanation": "実行した変更の説明"
+}
+
+注意事項:
+- セルアドレスは必ずA1, B2のような形式で指定してください
+- 数値計算が必要な場合は正確に計算してください
+- 既存のデータ構造を理解して適切に編集してください
+- JSONフォーマット以外は返さないでください
+`;
+
+      const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${deepseekApiKey}`
+        },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          max_tokens: 2000,
+          temperature: 0.1
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || 'API request failed');
+      }
+
+      const data: DeepSeekResponse = await response.json();
+      const content = data.choices[0]?.message?.content;
+
+      if (!content) {
+        throw new Error('APIからの応答が空です');
+      }
+
+      // JSONレスポンスを解析
+      let parsedResponse;
+      try {
+        // JSONの開始と終了を見つけて抽出
+        const jsonStart = content.indexOf('{');
+        const jsonEnd = content.lastIndexOf('}') + 1;
+        const jsonString = content.substring(jsonStart, jsonEnd);
+        parsedResponse = JSON.parse(jsonString);
+      } catch (parseError) {
+        console.error('JSON解析エラー:', parseError);
+        console.log('APIレスポンス:', content);
+        throw new Error('APIレスポンスの解析に失敗しました');
+      }
+
+      // Excelデータを更新
+      if (parsedResponse.updates && Array.isArray(parsedResponse.updates)) {
+        const newSheetData = [...sheetData];
+        const changes: { cellRange: string; beforeValue: any; afterValue: any }[] = [];
+
+        parsedResponse.updates.forEach((update: CellUpdate) => {
+          try {
+            const cellRef = XLSX.utils.decode_cell(update.address);
+            if (cellRef.r < newSheetData.length && cellRef.c < newSheetData[cellRef.r].length) {
+              const beforeValue = newSheetData[cellRef.r][cellRef.c].value;
+              newSheetData[cellRef.r][cellRef.c] = {
+                ...newSheetData[cellRef.r][cellRef.c],
+                value: update.value,
+                formula: update.formula
+              };
+              
+              changes.push({
+                cellRange: update.address,
+                beforeValue,
+                afterValue: update.value
+              });
+
+              // ワークブックも更新
+              if (workbook && workbook.Sheets[activeSheet]) {
+                const cell = workbook.Sheets[activeSheet][update.address] || {};
+                cell.v = update.value;
+                if (update.formula) {
+                  cell.f = update.formula;
+                }
+                workbook.Sheets[activeSheet][update.address] = cell;
+              }
+            }
+          } catch (error) {
+            console.error(`セル ${update.address} の更新エラー:`, error);
+          }
+        });
+
+        setSheetData(newSheetData);
+
+        // 編集履歴に追加
+        const newHistory: EditHistory = {
+          id: Date.now().toString(),
+          timestamp: new Date(),
+          instruction,
+          changes,
+          formatPreserved: true
+        };
+
+        setEditHistory(prev => [newHistory, ...prev.slice(0, 9)]);
+        
+        toast.success(`編集完了: ${parsedResponse.explanation || '変更が適用されました'}`);
+      } else {
+        toast.error('有効な更新データが見つかりませんでした');
+      }
+
+    } catch (error) {
+      console.error('DeepSeek処理エラー:', error);
+      toast.error(`編集処理に失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  }, [deepseekApiKey, workbook, sheetData, activeSheet]);
+
+  // 編集指示の実行（DeepSeek API使用）
+  const executeInstruction = useCallback(() => {
+    if (!currentInstruction.trim()) {
+      toast.error('編集指示を入力してください');
+      return;
+    }
+
+    if (apiConnectionStatus !== 'success') {
+      toast.error('まずDeepSeek APIの接続テストを実行してください');
+      return;
+    }
+
+    processWithDeepSeek(currentInstruction);
+    setCurrentInstruction('');
+  }, [currentInstruction, apiConnectionStatus, processWithDeepSeek]);
+
   // ファイルドロップハンドラー
   const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -238,34 +484,6 @@ const ExcelQuoteEditor: React.FC = () => {
       loadSheetData(workbook, sheetName);
     }
   }, [workbook, loadSheetData]);
-
-  // 編集指示の実行（シミュレーション）
-  const executeInstruction = useCallback(() => {
-    if (!currentInstruction.trim()) {
-      toast.error('編集指示を入力してください');
-      return;
-    }
-
-    // シミュレーション用の編集処理
-    const newHistory: EditHistory = {
-      id: Date.now().toString(),
-      timestamp: new Date(),
-      instruction: currentInstruction,
-      changes: [
-        {
-          cellRange: 'A1:B2',
-          beforeValue: '変更前の値',
-          afterValue: '変更後の値'
-        }
-      ],
-      formatPreserved: true
-    };
-
-    setEditHistory(prev => [newHistory, ...prev.slice(0, 9)]); // 最新10件を保持
-    setCurrentInstruction('');
-    
-    toast.success('編集指示を実行しました（デモ）');
-  }, [currentInstruction]);
 
   // Undo機能
   const handleUndo = useCallback(() => {
@@ -352,11 +570,15 @@ const ExcelQuoteEditor: React.FC = () => {
               <FileSpreadsheet className="h-8 w-8" />
               見積書エディター
             </CardTitle>
-            <p className="text-blue-700 mt-2">自然言語でExcel見積書を編集（書式保持）</p>
+            <p className="text-blue-700 mt-2">DeepSeek AIでExcel見積書を自然言語編集（書式保持）</p>
             <div className="flex items-center justify-center gap-2 mt-3">
               <Palette className="h-5 w-5 text-purple-600" />
               <Badge variant="secondary" className="bg-purple-100 text-purple-800">
                 📋 元の書式を保持します
+              </Badge>
+              <Zap className="h-5 w-5 text-yellow-600" />
+              <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">
+                🤖 DeepSeek AI搭載
               </Badge>
             </div>
           </CardHeader>
@@ -365,6 +587,77 @@ const ExcelQuoteEditor: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* 左側：アップロード・編集エリア */}
           <div className="lg:col-span-1 space-y-6">
+            {/* DeepSeek API設定エリア */}
+            <Card className="border-2 border-yellow-200">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-yellow-800">
+                  <Key className="h-5 w-5" />
+                  DeepSeek API設定
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="deepseek-api-key">APIキー</Label>
+                  <Input
+                    id="deepseek-api-key"
+                    type="password"
+                    placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    value={deepseekApiKey}
+                    onChange={(e) => setDeepseekApiKey(e.target.value)}
+                  />
+                  <p className="text-xs text-gray-500">
+                    DeepSeek APIキーを入力してください（
+                    <a 
+                      href="https://platform.deepseek.com/" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:underline"
+                    >
+                      取得はこちら
+                    </a>
+                    ）
+                  </p>
+                </div>
+                
+                <div className="flex gap-2">
+                  <Button 
+                    onClick={testDeepSeekConnection}
+                    disabled={isApiTesting || !deepseekApiKey.trim()}
+                    variant="outline"
+                    className="flex-1"
+                  >
+                    {isApiTesting ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                        テスト中...
+                      </>
+                    ) : (
+                      <>
+                        <TestTube className="h-4 w-4 mr-2" />
+                        接続テスト
+                      </>
+                    )}
+                  </Button>
+                </div>
+
+                {apiConnectionStatus !== 'none' && (
+                  <Alert className={apiConnectionStatus === 'success' ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'}>
+                    {apiConnectionStatus === 'success' ? (
+                      <CheckCircle className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <AlertCircle className="h-4 w-4 text-red-600" />
+                    )}
+                    <AlertDescription className={apiConnectionStatus === 'success' ? 'text-green-800' : 'text-red-800'}>
+                      {apiConnectionStatus === 'success' 
+                        ? 'API接続成功！編集機能が利用可能です。' 
+                        : 'API接続に失敗しました。APIキーを確認してください。'
+                      }
+                    </AlertDescription>
+                  </Alert>
+                )}
+              </CardContent>
+            </Card>
+
             {/* ファイルアップロードエリア */}
             <Card>
               <CardHeader>
@@ -470,11 +763,11 @@ const ExcelQuoteEditor: React.FC = () => {
 
             {/* 編集指示入力エリア */}
             {workbook && (
-              <Card>
+              <Card className="border-2 border-green-200">
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Calculator className="h-5 w-5" />
-                    編集指示入力
+                  <CardTitle className="flex items-center gap-2 text-green-800">
+                    <Zap className="h-5 w-5" />
+                    AI編集指示入力
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -484,40 +777,77 @@ const ExcelQuoteEditor: React.FC = () => {
 - 消費税を8%から10%に変更
 - 運送費と設置費を「配送関連費用」にまとめる
 - 為替レート140円で再計算
+- A列の単価を全て20%アップして
 
-※書式は自動的に保持されます`}
+※DeepSeek AIが自動で計算・編集します`}
                     value={currentInstruction}
                     onChange={(e) => setCurrentInstruction(e.target.value)}
                     rows={6}
                   />
                   <Button 
                     onClick={executeInstruction}
-                    className="w-full bg-blue-600 hover:bg-blue-700"
+                    disabled={isProcessing || apiConnectionStatus !== 'success'}
+                    className="w-full bg-green-600 hover:bg-green-700"
                   >
-                    編集を実行（書式保持）
+                    {isProcessing ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                        AI処理中...
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="h-4 w-4 mr-2" />
+                        AI編集を実行（書式保持）
+                      </>
+                    )}
                   </Button>
+                  
+                  {apiConnectionStatus !== 'success' && (
+                    <Alert>
+                      <AlertCircle className="h-4 w-4" />
+                      <AlertDescription className="text-sm">
+                        AI編集を使用するには、まずDeepSeek APIの接続テストを成功させてください。
+                      </AlertDescription>
+                    </Alert>
+                  )}
                   
                   {/* クイック編集ボタン */}
                   <div className="grid grid-cols-2 gap-2">
-                    <Button variant="outline" size="sm" className="text-xs">
-                      <Plus className="h-3 w-3 mr-1" />
-                      列を追加
-                      <Badge variant="secondary" className="ml-1 text-xs">書式継承</Badge>
-                    </Button>
-                    <Button variant="outline" size="sm" className="text-xs">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="text-xs"
+                      onClick={() => setCurrentInstruction('新しい行を最後に追加して')}
+                    >
                       <Plus className="h-3 w-3 mr-1" />
                       行を追加
-                      <Badge variant="secondary" className="ml-1 text-xs">書式継承</Badge>
                     </Button>
-                    <Button variant="outline" size="sm" className="text-xs">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="text-xs"
+                      onClick={() => setCurrentInstruction('新しい列を最後に追加して')}
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      列を追加
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="text-xs"
+                      onClick={() => setCurrentInstruction('小計を計算して追加して')}
+                    >
                       <Calculator className="h-3 w-3 mr-1" />
                       小計を計算
-                      <Badge variant="secondary" className="ml-1 text-xs">書式継承</Badge>
                     </Button>
-                    <Button variant="outline" size="sm" className="text-xs">
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      className="text-xs"
+                      onClick={() => setCurrentInstruction('全ての金額に10%の消費税を追加して')}
+                    >
                       <Percent className="h-3 w-3 mr-1" />
-                      パーセント追加
-                      <Badge variant="secondary" className="ml-1 text-xs">書式継承</Badge>
+                      消費税追加
                     </Button>
                   </div>
                 </CardContent>
@@ -757,15 +1087,17 @@ const ExcelQuoteEditor: React.FC = () => {
                 <AlertDescription>
                   <strong>使い方：</strong>
                   <br />
-                  1. Excel見積書ファイル（.xlsx, .xls）をアップロード
+                  1. DeepSeek APIキーを設定し、接続テストを実行
                   <br />
-                  2. 自然言語で編集指示を入力（例：「小計を10%値引きして更新して」）
+                  2. Excel見積書ファイル（.xlsx, .xls）をアップロード
                   <br />
-                  3. 編集を実行し、書式を保持したままダウンロード
+                  3. 自然言語でAI編集指示を入力（例：「小計を10%値引きして更新して」）
+                  <br />
+                  4. AI編集を実行し、書式を保持したままダウンロード
                   <br />
                   <br />
-                  <strong>注意：</strong> 現在はデモ版のため、実際の編集処理はシミュレーションです。
-                  実際の自然言語処理はClaudeとの対話で実現されます。
+                  <strong>注意：</strong> DeepSeek APIキーはブラウザ上で直接使用されます。
+                  セキュリティ上、信頼できる環境でのみご利用ください。
                 </AlertDescription>
               </Alert>
             </CardContent>
