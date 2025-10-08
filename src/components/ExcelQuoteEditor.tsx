@@ -81,7 +81,7 @@ interface DeepSeekResponse {
 
 interface CellUpdate {
   address: string;
-  value: any;
+  value?: any;
   formula?: string;
 }
 
@@ -263,6 +263,10 @@ const ExcelQuoteEditor: React.FC = () => {
           }
         }
 
+        if (Object.keys(cellStyle).length > 0) {
+          styles.set(cellAddress, cellStyle);
+        }
+
         row.push(cellData);
       }
       data.push(row);
@@ -415,32 +419,47 @@ ${instruction}
 
       // Excelデータを更新
       if (parsedResponse.updates && Array.isArray(parsedResponse.updates)) {
-        const newSheetData = [...sheetData];
+        const newSheetData = sheetData.map(row => row.map(cell => ({ ...cell })));
         const changes: { cellRange: string; beforeValue: any; afterValue: any }[] = [];
 
         parsedResponse.updates.forEach((update: CellUpdate) => {
           try {
             const cellRef = XLSX.utils.decode_cell(update.address);
             if (cellRef.r < newSheetData.length && cellRef.c < newSheetData[cellRef.r].length) {
-              const beforeValue = newSheetData[cellRef.r][cellRef.c].value;
-              newSheetData[cellRef.r][cellRef.c] = {
-                ...newSheetData[cellRef.r][cellRef.c],
-                value: update.value,
-                formula: update.formula
-              };
+              const currentCell = newSheetData[cellRef.r][cellRef.c];
+              const beforeValue = currentCell.value;
+              const beforeFormula = currentCell.formula;
+
+              const nextCell = { ...currentCell };
+
+              if (Object.prototype.hasOwnProperty.call(update, 'value')) {
+                nextCell.value = update.value;
+              }
+
+              if (update.formula !== undefined) {
+                nextCell.formula = update.formula;
+              }
+
+              newSheetData[cellRef.r][cellRef.c] = nextCell;
               
               changes.push({
                 cellRange: update.address,
                 beforeValue,
-                afterValue: update.value
+                afterValue: Object.prototype.hasOwnProperty.call(update, 'value') ? update.value : nextCell.value
               });
 
               // ワークブックも更新
               if (workbook && workbook.Sheets[activeSheet]) {
                 const cell = workbook.Sheets[activeSheet][update.address] || {};
-                cell.v = update.value;
-                if (update.formula) {
-                  cell.f = update.formula;
+                if (Object.prototype.hasOwnProperty.call(update, 'value')) {
+                  cell.v = update.value;
+                }
+                const targetFormula = update.formula !== undefined ? update.formula : beforeFormula;
+                if (targetFormula) {
+                  cell.f = targetFormula;
+                }
+                if (nextCell.type) {
+                  cell.t = nextCell.type;
                 }
                 workbook.Sheets[activeSheet][update.address] = cell;
               }
@@ -550,20 +569,48 @@ ${instruction}
         sheetData.forEach((row, rowIndex) => {
           row.forEach((cell, colIndex) => {
             const cellAddress = XLSX.utils.encode_cell({ r: rowIndex, c: colIndex });
-            const existingCell = worksheet[cellAddress] || {};
-            
-            // 値を更新しつつ、既存の書式情報を保持
-            worksheet[cellAddress] = {
-              ...existingCell,
-              v: cell.value,
-              t: cell.type || (typeof cell.value === 'number' ? 'n' : 's'),
-              f: cell.formula
-            };
-            
-            // 書式情報を保持
-            if (existingCell.s) {
-              worksheet[cellAddress].s = existingCell.s;
+            const existingCell = worksheet[cellAddress];
+
+            const isEmptyValue = cell.value === '' || cell.value === null || cell.value === undefined;
+            const hasFormula = !!cell.formula;
+
+            if (isEmptyValue && !hasFormula) {
+              if (!existingCell) {
+                return;
+              }
+              const cloned = { ...existingCell } as XLSX.CellObject;
+              delete cloned.v;
+              delete cloned.w;
+              delete cloned.z;
+              if (!cloned.f) {
+                delete worksheet[cellAddress];
+              } else {
+                worksheet[cellAddress] = cloned;
+              }
+              return;
             }
+
+            const nextCell: XLSX.CellObject = {
+              ...(existingCell || {})
+            };
+
+            if (cell.type) {
+              nextCell.t = cell.type;
+            } else if (!nextCell.t) {
+              nextCell.t = typeof cell.value === 'number' ? 'n' : 's';
+            }
+
+            if (hasFormula) {
+              nextCell.f = cell.formula;
+            } else if (nextCell.f) {
+              delete nextCell.f;
+            }
+
+            if (!isEmptyValue) {
+              nextCell.v = cell.value;
+            }
+
+            worksheet[cellAddress] = nextCell;
           });
         });
       }
