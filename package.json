@@ -1,7 +1,8 @@
 {
-  "name": "vite_react_shadcn_ts",
+  "name": "excel-quote-editor",
+  "description": "DeepSeek AIを使用してExcelファイルを自然言語で編集できるWebアプリケーション",
+  "version": "1.0.0",
   "private": true,
-  "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "VITE_ENABLE_ROUTE_MESSAGING=true vite",

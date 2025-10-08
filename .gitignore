@@ -1,99 +1,75 @@
-# --- Dependencies ---
-node_modules/
-jspm_packages/
-
-# --- Package manager caches / debug logs ---
-.npm/
-.pnpm-store/
-.pnpm-debug.log*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/sdks
-!.yarn/versions
+# Logs
+logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
-bun-debug.log*
 
-# --- Logs & diagnostics ---
-logs/
-*.log
-report.[0-9]*.json
+node_modules
+dist
+dist-ssr
+*.local
 
-# --- Runtime data / pids ---
-pids/
-*.pid
-*.seed
-*.pid.lock
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
-# --- Env files (keep examples) ---
+# Environment variables
 .env
-.env.*
-!.env.example
-!.env.*.example
-!.env.local.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
-# --- Coverage ---
-coverage/
-.nyc_output/
-
-# --- Build outputs / caches ---
-dist/
+# Build outputs
 build/
+.next/
 out/
-bin/
-.tmp/
-tmp/
-temp/
-.cache/
-.esbuild/
-.esbuild-cache/
-.parcel-cache/
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Microbundle cache
 .rpt2_cache/
 .rts2_cache_cjs/
 .rts2_cache_es/
 .rts2_cache_umd/
-.vite/
-.vite-inspect/
 
-# --- TypeScript ---
-*.tsbuildinfo
-
-# --- Common web frameworks ---
-.next/
-.nuxt/
-.svelte-kit/
-.storybook-out/
-storybook-static/
-.angular/
-.docusaurus/
-.vercel/
-.netlify/
-.output/
-
-# --- E2E / testing artifacts ---
-playwright-report/
-test-results/
-cypress/videos/
-cypress/screenshots/
-cypress/downloads/
-
-# --- Editors & OS junk ---
-.vscode/*
-!.vscode/extensions.json
-!.vscode/tasks.json
-.idea/
-*.iml
-.vs/
-*.swp
-.DS_Store
-Thumbs.db
+# Optional REPL history
 .node_repl_history
 
-# --- Uploaded Files ---
-uploaded_files/
+# Output of 'npm pack'
+*.tgz
 
+# Yarn Integrity file
+.yarn-integrity
+
+# parcel-bundler cache (https://parceljs.org/)
+.cache
+.parcel-cache
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# yarn v2
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*

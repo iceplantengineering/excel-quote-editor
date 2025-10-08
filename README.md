@@ -1,58 +1,93 @@
-# Project Build Guide
+# Excel見積書エディター
 
-## Tech Stack
+DeepSeek AIを使用してExcelファイルを自然言語で編集できるWebアプリケーションです。元のExcelファイルの書式（色、フォント、罫線、セル結合など）を保持したまま、日本語の指示でデータを更新できます。
 
-This project is built using the following technologies:
+## 🚀 機能
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+### 📊 データプレビュー
+- **大きな表示エリア**: 最大600px（フルスクリーンでは画面全体）
+- **ズーム機能**: 50%〜200%の範囲で10%刻みで調整可能
+- **フルスクリーン表示**: ワンクリックで全画面プレビュー
+- **固定ヘッダー・行番号**: スクロール時も列・行が見やすい
 
-## Prerequisites
+### 🤖 AI自然言語編集
+- **DeepSeek API連携**: 最新のLLMによる高精度な編集
+- **日本語対応**: 自然な日本語での編集指示
+- **自動計算**: 複雑な計算も自動で処理
+- **編集履歴**: 詳細な変更履歴とUndo機能
 
-Make sure your system has Node.js and npm installed.
+### 🎨 書式保持
+- **完全な書式保持**: セルの背景色、フォント、罫線、セル結合
+- **色変換**: ARGBからRGBへの正確な変換
+- **詳細な罫線処理**: 上下左右の罫線を個別に処理
+- **数値フォーマット**: Excel標準の数値書式を維持
 
-We recommend using nvm to install Node.js: [nvm Installation Guide](https://github.com/nvm-sh/nvm#installing-and-updating)
+### 📁 ファイル対応
+- **対応形式**: .xlsx, .xls
+- **ドラッグ&ドロップ**: 簡単なファイルアップロード
+- **複数シート**: タブ切り替えで複数シート対応
+- **書式保持ダウンロード**: 編集後も元の書式を維持
 
-## Install Dependencies
+## 🛠️ 技術スタック
 
-```sh
+- **フロントエンド**: React 18, TypeScript, Vite
+- **UI**: Tailwind CSS, shadcn/ui
+- **Excel処理**: SheetJS (XLSX)
+- **AI**: DeepSeek API
+- **アイコン**: Lucide React
+
+## 📦 インストール
+
+```bash
+# 依存関係のインストール
 npm install
-```
 
-## Development Server
-
-Start the development server with hot reload and instant preview:
-
-```sh
+# 開発サーバーの起動
 npm run dev
-```
 
-## Build Project
-
-Build for production:
-
-```sh
+# ビルド
 npm run build
-```
 
-## Preview Build
-
-Preview the built project:
-
-```sh
+# プレビュー
 npm run preview
 ```
 
-## Project Structure
+## 🔧 使用方法
 
-```
-src/
-├── components/     # UI Components
-├── pages/         # Page Components
-├── hooks/         # Custom Hooks
-├── lib/           # Utility Library
-└── main.tsx       # Application Entry Point
-```
+1. **APIキー設定**: DeepSeek APIキーを入力し、接続テストを実行
+2. **ファイルアップロード**: Excel見積書ファイルをアップロード
+3. **AI編集指示**: 自然言語で編集内容を入力
+   ```
+   例：
+   - 小計を10%値引きして更新して
+   - 消費税を8%から10%に変更
+   - 運送費と設置費を「配送関連費用」にまとめる
+   - 為替レート140円で再計算
+   ```
+4. **AI編集実行**: DeepSeek LLMが自動でExcelデータを編集
+5. **ダウンロード**: 書式を保持したままExcelファイルをダウンロード
+
+## 🔑 APIキーの取得
+
+1. [DeepSeek Platform](https://platform.deepseek.com/)にアクセス
+2. アカウントを作成
+3. APIキーを生成
+4. アプリケーションに入力
+
+## ⚠️ 注意事項
+
+- **セキュリティ**: APIキーはブラウザ上で直接使用されます。信頼できる環境でのみご利用ください。
+- **制限事項**: 画像・グラフ・マクロは保持されません。
+- **対応ブラウザ**: モダンブラウザ（Chrome, Firefox, Safari, Edge）
+
+## 📄 ライセンス
+
+MIT License
+
+## 🤝 コントリビューション
+
+プルリクエストやイシューの報告を歓迎します。
+
+## 📞 サポート
+
+問題や質問がある場合は、GitHubのIssuesをご利用ください。
